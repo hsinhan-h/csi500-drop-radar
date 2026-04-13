@@ -29,10 +29,14 @@ public class StockFetchService
 
         try
         {
-            var endDate = DateTime.Today;
-            // 退到最近的交易日（跳過週末）
-            while (endDate.DayOfWeek == DayOfWeek.Saturday || endDate.DayOfWeek == DayOfWeek.Sunday)
-                endDate = endDate.AddDays(-1);
+            // 以北京時間為基準：15:00（收盤）後才算當日資料完整
+            var chinaTimeZone = GetChinaTimeZone();
+            var chinaNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, chinaTimeZone);
+            var baseDate = chinaNow.TimeOfDay < TimeSpan.FromHours(15)
+                ? chinaNow.Date.AddDays(-1)   // 盤前 / 盤中，推回前一天
+                : chinaNow.Date;               // 盤後，使用今天
+
+            var endDate = TradingCalendar.GetLatestTradingDay(baseDate);
             var startDate = period == "week" ? endDate.AddDays(-7) : endDate.AddMonths(-1);
             var startStr = startDate.ToString("yyyy-MM-dd");
             var endStr = endDate.ToString("yyyy-MM-dd");
@@ -192,6 +196,13 @@ public class StockFetchService
         }
 
         return null;
+    }
+
+    // Windows："China Standard Time"；Linux/Docker："Asia/Shanghai"
+    private static TimeZoneInfo GetChinaTimeZone()
+    {
+        try { return TimeZoneInfo.FindSystemTimeZoneById("China Standard Time"); }
+        catch { return TimeZoneInfo.FindSystemTimeZoneById("Asia/Shanghai"); }
     }
 
     private async Task<string> RetryGetAsync(string url)
