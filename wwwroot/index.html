@@ -239,7 +239,7 @@ function render(r){
     <div class="chip">截止：<span>${fmt(r.end_date)}</span></div>
     <div class="chip">有效資料：<span>${r.fetched}/${r.total} 檔</span></div>
     <div class="chip">產生：<span>${r.generated_at}</span></div>
-    <a class="dl-btn" href="/api/download/${taskId}">⬇ 下載 Excel</a>`;
+    <a class="dl-btn" href="/api/download/${taskId}?top_n=${topN}">⬇ 下載 Excel</a>`;
   document.getElementById('tbody').innerHTML=rows.map((row,i)=>{
     const rk=i+1,pos=row['漲跌幅(%)']>=0;
     return`<tr>

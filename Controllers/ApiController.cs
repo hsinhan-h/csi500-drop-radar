@@ -43,18 +43,19 @@ public class ApiController : ControllerBase
         });
     }
 
-    // GET /api/download/{taskId}
+    // GET /api/download/{taskId}?top_n=10
     [HttpGet("/api/download/{taskId}")]
-    public IActionResult Download(string taskId)
+    public IActionResult Download(string taskId, [FromQuery(Name = "top_n")] int topN = 10)
     {
         var task = _taskManager.Get(taskId);
         if (task == null || task.Status != JobStatus.Done)
             return BadRequest(new { error = "資料尚未準備好" });
 
         var result = task.Result!;
+        var topLosers = result.AllData.Take(topN).ToList();
         using var wb = new XLWorkbook();
 
-        WriteSheet(wb, $"跌幅前10（{result.PeriodLabel}）", result.TopLosers, withIndex: true);
+        WriteSheet(wb, $"跌幅前{topN}（{result.PeriodLabel}）", topLosers, withIndex: true);
         WriteSheet(wb, "全部成分股", result.AllData, withIndex: false);
 
         using var ms = new MemoryStream();
