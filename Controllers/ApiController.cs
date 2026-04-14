@@ -1,6 +1,8 @@
 using ClosedXML.Excel;
 using Csi500DropRadar.Models;
 using Csi500DropRadar.Services;
+using Csi500DropRadar.Services.Indices;
+using Csi500DropRadar.Services.Localization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Csi500DropRadar.Controllers;
@@ -8,21 +10,45 @@ namespace Csi500DropRadar.Controllers;
 [ApiController]
 public class ApiController : ControllerBase
 {
-    private readonly TaskManagerService _taskManager;
-    private readonly StockFetchService _fetchService;
+    private readonly TaskManagerService  _taskManager;
+    private readonly DropAnalysisService _dropService;
+    private readonly IndexRegistry       _registry;
 
-    public ApiController(TaskManagerService taskManager, StockFetchService fetchService)
+    public ApiController(
+        TaskManagerService taskManager,
+        DropAnalysisService dropService,
+        IndexRegistry registry)
     {
         _taskManager = taskManager;
-        _fetchService = fetchService;
+        _dropService  = dropService;
+        _registry     = registry;
     }
+
+    // GET /api/indices — 回傳所有可用指數的 descriptor
+    [HttpGet("/api/indices")]
+    public IActionResult Indices() =>
+        Ok(_registry.All().Select(m => new
+        {
+            id                       = m.Descriptor.Id,
+            display_name_zh          = m.Descriptor.DisplayNameZh,
+            display_name_en          = m.Descriptor.DisplayNameEn,
+            currency                 = m.Descriptor.Currency,
+            expected_constituent_count = m.Descriptor.ExpectedConstituentCount,
+            estimated_time_zh        = m.Descriptor.EstimatedTimeZh,
+            estimated_time_en        = m.Descriptor.EstimatedTimeEn,
+        }));
 
     // POST /api/start
     [HttpPost("/api/start")]
     public IActionResult Start([FromBody] StartRequest req)
     {
+        var indexId = req.Index ?? "csi500";
+        // 驗證 indexId 合法（讓 registry 拋例外時轉換為 400）
+        try { _registry.Get(indexId); }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
+
         var taskId = _taskManager.CreateTask();
-        _ = _fetchService.RunAsync(taskId, req.Period ?? "month", req.TopN);
+        _ = _dropService.RunAsync(taskId, indexId, req.Period ?? "month", req.TopN);
         return Ok(new { task_id = taskId });
     }
 
@@ -35,51 +61,75 @@ public class ApiController : ControllerBase
 
         return Ok(new
         {
-            status = task.Status.ToString().ToLower(),
+            status   = task.Status.ToString().ToLower(),
             progress = task.Progress,
-            pct = task.Pct,
-            result = task.Status == JobStatus.Done ? BuildResultDto(task.Result!) : null,
-            error = task.Error,
+            pct      = task.Pct,
+            result   = task.Status == JobStatus.Done ? BuildResultDto(task.Result!) : null,
+            error    = task.Error,
         });
     }
 
-    // GET /api/download/{taskId}?top_n=10
+    // GET /api/download/{taskId}?top_n=10&lang=zh-TW
     [HttpGet("/api/download/{taskId}")]
-    public IActionResult Download(string taskId, [FromQuery(Name = "top_n")] int topN = 10)
+    public IActionResult Download(
+        string taskId,
+        [FromQuery(Name = "top_n")] int topN = 10,
+        [FromQuery] string? lang = null)
     {
         var task = _taskManager.Get(taskId);
         if (task == null || task.Status != JobStatus.Done)
             return BadRequest(new { error = "資料尚未準備好" });
 
-        var result = task.Result!;
+        // 優先使用 query lang，其次 Accept-Language header
+        var locale = lang
+            ?? Request.Headers["Accept-Language"].FirstOrDefault()
+            ?? "zh-TW";
+
+        var result    = task.Result!;
         var topLosers = result.AllData.Take(topN).ToList();
+        var module    = _registry.Get(result.IndexId);
+        var nameZh    = module.Descriptor.DisplayNameZh;
+        var periodLbl = LocalizationHelper.PeriodLabel(result.Period, locale);
+
         using var wb = new XLWorkbook();
 
-        WriteSheet(wb, $"跌幅前{topN}（{result.PeriodLabel}）", topLosers, withIndex: true);
-        WriteSheet(wb, "全部成分股", result.AllData, withIndex: false);
+        var sheetTop = locale.StartsWith("zh")
+            ? $"跌幅前{topN}（{periodLbl}）"
+            : $"Top {topN} ({periodLbl})";
+        var sheetAll = LocalizationHelper.Get("sheet.all", locale);
+
+        WriteSheet(wb, sheetTop, topLosers, withIndex: true,  locale: locale);
+        WriteSheet(wb, sheetAll, result.AllData, withIndex: false, locale: locale);
 
         using var ms = new MemoryStream();
         wb.SaveAs(ms);
-        var filename = $"中證500跌幅分析_{result.PeriodLabel}_{result.GeneratedAt[..10]}.xlsx";
+        var filename = $"{nameZh}跌幅分析_{periodLbl}_{result.GeneratedAt[..10]}.xlsx";
         return File(ms.ToArray(),
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             filename);
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────
 
-    private static void WriteSheet(XLWorkbook wb, string sheetName, List<StockRecord> records, bool withIndex)
+    private static void WriteSheet(
+        XLWorkbook wb,
+        string sheetName,
+        List<StockRecord> records,
+        bool withIndex,
+        string locale)
     {
-        var ws = wb.Worksheets.Add(sheetName);
+        string L(string key) => LocalizationHelper.Get(key, locale);
+
+        var ws  = wb.Worksheets.Add(sheetName);
         int col = 1;
-        if (withIndex) ws.Cell(1, col++).Value = "#";
-        ws.Cell(1, col++).Value = "代碼";
-        ws.Cell(1, col++).Value = "名稱";
-        ws.Cell(1, col++).Value = "期初收盤價";
-        ws.Cell(1, col++).Value = "最新收盤價";
-        ws.Cell(1, col++).Value = "漲跌幅(%)";
-        ws.Cell(1, col++).Value = "期初日期";
-        ws.Cell(1, col).Value  = "最新日期";
+        if (withIndex) ws.Cell(1, col++).Value = L("col.rank");
+        ws.Cell(1, col++).Value = L("col.code");
+        ws.Cell(1, col++).Value = L("col.name");
+        ws.Cell(1, col++).Value = L("col.start_close");
+        ws.Cell(1, col++).Value = L("col.end_close");
+        ws.Cell(1, col++).Value = L("col.pct_change");
+        ws.Cell(1, col++).Value = L("col.start_date");
+        ws.Cell(1, col).Value   = L("col.end_date");
 
         for (int i = 0; i < records.Count; i++)
         {
@@ -92,13 +142,15 @@ public class ApiController : ControllerBase
             ws.Cell(row, c++).Value = r.EndClose;
             ws.Cell(row, c++).Value = r.PctChange;
             ws.Cell(row, c++).Value = r.StartDate;
-            ws.Cell(row, c).Value  = r.EndDate;
+            ws.Cell(row, c).Value   = r.EndDate;
         }
     }
 
     private static object BuildResultDto(TaskResult r) => new
     {
-        period_label = r.PeriodLabel,
+        index_id     = r.IndexId,
+        period       = r.Period,
+        currency     = r.Currency,
         start_date   = r.StartDate,
         end_date     = r.EndDate,
         fetched      = r.Fetched,
@@ -108,20 +160,22 @@ public class ApiController : ControllerBase
         all_data     = r.AllData.Select(s => ToDto(s, 0)),
     };
 
-    private static Dictionary<string, object> ToDto(StockRecord s, int rank) => new()
+    private static object ToDto(StockRecord s, int rank) => new
     {
-        ["代碼"]       = s.Code,
-        ["名稱"]       = s.Name,
-        ["期初收盤價"] = s.StartClose,
-        ["最新收盤價"] = s.EndClose,
-        ["漲跌幅(%)"]  = s.PctChange,
-        ["期初日期"]   = s.StartDate,
-        ["最新日期"]   = s.EndDate,
+        rank,
+        code        = s.Code,
+        name        = s.Name,
+        start_close = s.StartClose,
+        end_close   = s.EndClose,
+        pct_change  = s.PctChange,
+        start_date  = s.StartDate,
+        end_date    = s.EndDate,
     };
 }
 
 public class StartRequest
 {
+    public string? Index  { get; set; }   // "csi500" | "sox" | "ndx"（預設 csi500）
     public string? Period { get; set; }
     [System.Text.Json.Serialization.JsonPropertyName("top_n")]
     public int TopN { get; set; } = 10;

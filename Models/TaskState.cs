@@ -13,7 +13,9 @@ public class TaskState
 
 public class TaskResult
 {
-    public string PeriodLabel { get; set; } = "";
+    public string IndexId { get; set; } = "";      // "csi500" | "sox" | "ndx"
+    public string Period { get; set; } = "";        // "week" | "month"
+    public string Currency { get; set; } = "";      // "CNY" | "USD"
     public string StartDate { get; set; } = "";
     public string EndDate { get; set; } = "";
     public int Fetched { get; set; }
