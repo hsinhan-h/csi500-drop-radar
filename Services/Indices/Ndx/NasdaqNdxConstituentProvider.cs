@@ -10,6 +10,9 @@ namespace IndexSwingRadar.Services.Indices.Ndx;
 /// </summary>
 public class NasdaqNdxConstituentProvider : IConstituentProvider
 {
+    private static readonly Polly.ResiliencePipeline<System.Net.Http.HttpResponseMessage> _retryPipeline =
+        CommonHttp.CreateHttpRetryPipeline();
+
     private readonly HttpClient _http;
     private string? _crumb;
     private readonly SemaphoreSlim _crumbLock = new(1, 1);
@@ -111,12 +114,14 @@ public class NasdaqNdxConstituentProvider : IConstituentProvider
         return map;
     }
 
-    // ── HTTP GET（處理 401/403 → 回傳 false 讓外層重試） ─────────────────
+    // ── HTTP GET（處理 401/403 → 回傳 false 讓外層重試，429/5xx 由 Polly 處理）──
     private async Task<(bool ok, string? body)> TryGetAsync(string url, CancellationToken ct)
     {
         try
         {
-            var resp = await _http.GetAsync(url, ct);
+            var resp = await _retryPipeline.ExecuteAsync(
+                async token => await _http.GetAsync(url, token), ct);
+
             if (resp.StatusCode is System.Net.HttpStatusCode.Unauthorized
                                 or System.Net.HttpStatusCode.Forbidden)
                 return (false, null);
@@ -130,7 +135,7 @@ public class NasdaqNdxConstituentProvider : IConstituentProvider
         }
     }
 
-    // ── cookie + crumb（與 YahooQuoteProvider 相同機制）──────────────────
+    // ── cookie + crumb（429/5xx 由 Polly 指數退避處理，交替嘗試 query1/query2）──
     private async Task<string> EnsureCrumbAsync(CancellationToken ct)
     {
         if (_crumb != null) return _crumb;
@@ -140,9 +145,22 @@ public class NasdaqNdxConstituentProvider : IConstituentProvider
         {
             if (_crumb != null) return _crumb;
             await _http.GetAsync("https://fc.yahoo.com/", ct);
-            _crumb = await _http.GetStringAsync(
-                "https://query2.finance.yahoo.com/v1/test/getcrumb", ct);
-            return _crumb;
+
+            foreach (var host in new[] {
+                "https://query1.finance.yahoo.com",
+                "https://query2.finance.yahoo.com" })
+            {
+                var resp = await _retryPipeline.ExecuteAsync(
+                    async token => await _http.GetAsync($"{host}/v1/test/getcrumb", token), ct);
+
+                if (resp.IsSuccessStatusCode)
+                {
+                    _crumb = await resp.Content.ReadAsStringAsync(ct);
+                    if (!string.IsNullOrWhiteSpace(_crumb)) return _crumb;
+                }
+            }
+
+            throw new Exception("Yahoo Finance crumb 取得失敗（持續速率限制）");
         }
         finally
         {

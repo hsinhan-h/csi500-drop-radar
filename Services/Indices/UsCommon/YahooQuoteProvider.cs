@@ -9,6 +9,9 @@ namespace IndexSwingRadar.Services.Indices.UsCommon;
 /// </summary>
 public class YahooQuoteProvider : IQuoteProvider, IDisposable
 {
+    private static readonly Polly.ResiliencePipeline<System.Net.Http.HttpResponseMessage> _retryPipeline =
+        CommonHttp.CreateHttpRetryPipeline();
+
     private readonly HttpClient _http;
     private string? _crumb;
     private readonly SemaphoreSlim _crumbLock = new(1, 1);
@@ -32,52 +35,38 @@ public class YahooQuoteProvider : IQuoteProvider, IDisposable
         DateTime endDate,
         CancellationToken ct = default)
     {
-        for (int attempt = 0; attempt < 3; attempt++)
+        try
         {
-            try
+            var p1 = new DateTimeOffset(startDate.Date, TimeSpan.Zero).ToUnixTimeSeconds();
+            var p2 = new DateTimeOffset(endDate.Date.AddDays(1), TimeSpan.Zero).ToUnixTimeSeconds();
+            var basePath = $"/v8/finance/chart/{Uri.EscapeDataString(symbol.Code)}" +
+                           $"?period1={p1}&period2={p2}&interval=1d";
+
+            // 先嘗試不帶 crumb；Polly 負責 429/5xx 的指數退避重試。
+            var resp = await _retryPipeline.ExecuteAsync(
+                async token => await _http.GetAsync($"{YahooQuery2}{basePath}", token), ct);
+
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+                resp = await _retryPipeline.ExecuteAsync(
+                    async token => await _http.GetAsync($"{YahooQuery1}{basePath}", token), ct);
+
+            // 被拒絕時才啟用 cookie + crumb fallback。
+            if (resp.StatusCode is System.Net.HttpStatusCode.Unauthorized
+                                or System.Net.HttpStatusCode.Forbidden)
             {
-                var p1 = new DateTimeOffset(startDate.Date, TimeSpan.Zero).ToUnixTimeSeconds();
-                var p2 = new DateTimeOffset(endDate.Date.AddDays(1), TimeSpan.Zero).ToUnixTimeSeconds();
-                var basePath = $"/v8/finance/chart/{Uri.EscapeDataString(symbol.Code)}?period1={p1}&period2={p2}&interval=1d";
-
-                // 先嘗試不帶 crumb。某些環境（例如 Render）此路徑更穩定。
-                var resp = await _http.GetAsync($"{YahooQuery2}{basePath}", ct);
-
-                if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
-                    resp = await _http.GetAsync($"{YahooQuery1}{basePath}", ct);
-
-                if (resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-                {
-                    await Task.Delay(1500 * (attempt + 1), ct);
-                    continue;
-                }
-
-                // 被拒絕時才啟用 cookie + crumb fallback。
-                if (resp.StatusCode is System.Net.HttpStatusCode.Unauthorized
-                                    or System.Net.HttpStatusCode.Forbidden)
-                {
-                    var fallbackJson = await TryFetchWithCrumbFallbackAsync(basePath, ct);
-                    if (fallbackJson != null)
-                        return ParseChart(symbol, fallbackJson);
-
-                    await Task.Delay(2000 * (attempt + 1), ct);
-                    _crumb = null;
-                    continue;
-                }
-
-                resp.EnsureSuccessStatusCode();
-
-                var json = await resp.Content.ReadAsStringAsync(ct);
-                return ParseChart(symbol, json);
+                _crumb = null;
+                var fallbackJson = await TryFetchWithCrumbFallbackAsync(basePath, ct);
+                return fallbackJson != null ? ParseChart(symbol, fallbackJson) : null;
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[WARN] Yahoo {symbol.Code} 第{attempt + 1}次失敗: {ex.Message}");
-                if (attempt < 2) await Task.Delay(2000 * (attempt + 1), ct);
-            }
+
+            resp.EnsureSuccessStatusCode();
+            return ParseChart(symbol, await resp.Content.ReadAsStringAsync(ct));
         }
-
-        return null;
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WARN] Yahoo {symbol.Code} 失敗: {ex.Message}");
+            return null;
+        }
     }
 
     private async Task<string?> TryFetchWithCrumbFallbackAsync(string basePath, CancellationToken ct)
@@ -87,7 +76,8 @@ public class YahooQuoteProvider : IQuoteProvider, IDisposable
 
         foreach (var host in new[] { YahooQuery2, YahooQuery1 })
         {
-            var resp = await _http.GetAsync($"{host}{withCrumb}", ct);
+            var resp = await _retryPipeline.ExecuteAsync(
+                async token => await _http.GetAsync($"{host}{withCrumb}", token), ct);
             if (resp.IsSuccessStatusCode)
                 return await resp.Content.ReadAsStringAsync(ct);
         }
@@ -95,7 +85,7 @@ public class YahooQuoteProvider : IQuoteProvider, IDisposable
         return null;
     }
 
-    // ── 取得 / 快取 Yahoo crumb ───────────────────────────────────────────
+    // ── 取得 / 快取 Yahoo crumb（429/5xx 由 Polly 指數退避處理）──────────
     private async Task<string> EnsureCrumbAsync(CancellationToken ct)
     {
         if (_crumb != null) return _crumb;
@@ -104,16 +94,21 @@ public class YahooQuoteProvider : IQuoteProvider, IDisposable
         try
         {
             if (_crumb != null) return _crumb;
-
-            // Step 1：打 fc.yahoo.com 讓伺服器設定 session cookie
             await _http.GetAsync("https://fc.yahoo.com/", ct);
 
-            // Step 2：取得 crumb 字串
-            _crumb = await _http.GetStringAsync("https://query2.finance.yahoo.com/v1/test/getcrumb", ct);
-            if (string.IsNullOrWhiteSpace(_crumb))
-                _crumb = await _http.GetStringAsync("https://query1.finance.yahoo.com/v1/test/getcrumb", ct);
+            foreach (var host in new[] { YahooQuery2, YahooQuery1 })
+            {
+                var resp = await _retryPipeline.ExecuteAsync(
+                    async token => await _http.GetAsync($"{host}/v1/test/getcrumb", token), ct);
 
-            return _crumb;
+                if (resp.IsSuccessStatusCode)
+                {
+                    _crumb = await resp.Content.ReadAsStringAsync(ct);
+                    if (!string.IsNullOrWhiteSpace(_crumb)) return _crumb;
+                }
+            }
+
+            throw new Exception("Yahoo Finance crumb 取得失敗");
         }
         finally
         {

@@ -1,14 +1,33 @@
 using System.Net;
 using System.Net.Sockets;
+using Polly;
+using Polly.Retry;
 
 namespace IndexSwingRadar.Services.Indices;
 
-/// <summary>供各 Provider 共用的 HTTP 工具方法。</summary>
 public static class CommonHttp
 {
     /// <summary>
+    /// 建立可處理 429 / 5xx / 網路例外的 Polly Retry Pipeline（指數退避 + Jitter）。
+    /// </summary>
+    public static ResiliencePipeline<HttpResponseMessage> CreateHttpRetryPipeline(int maxAttempts = 4) =>
+        new ResiliencePipelineBuilder<HttpResponseMessage>()
+            .AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+            {
+                ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+                    .Handle<HttpRequestException>()
+                    .HandleResult(r => r.StatusCode == HttpStatusCode.TooManyRequests
+                                    || (int)r.StatusCode >= 500),
+                MaxRetryAttempts = maxAttempts - 1,
+                Delay = TimeSpan.FromSeconds(2),
+                BackoffType = DelayBackoffType.Exponential,
+                UseJitter = true,
+            })
+            .Build();
+
+    /// <summary>
     /// 建立強制走 IPv4 的 HttpClient，避免在 Render 等平台上因 IPv6 出站
-    /// 連到只有 IPv4 後端的中國 API 時收到 502 Bad Gateway。
+    /// 連到只有 IPv4 後端的 API 時收到 502 Bad Gateway。
     /// </summary>
     public static HttpClient CreateIpv4Client(bool useCookies = false)
     {
@@ -37,17 +56,17 @@ public static class CommonHttp
         int maxAttempts = 3,
         CancellationToken ct = default)
     {
-        for (int i = 0; i < maxAttempts; i++)
-        {
-            try
+        var pipeline = new ResiliencePipelineBuilder<string>()
+            .AddRetry(new RetryStrategyOptions<string>
             {
-                return await http.GetStringAsync(url, ct);
-            }
-            catch when (i < maxAttempts - 1)
-            {
-                await Task.Delay(2000 * (i + 1), ct);
-            }
-        }
-        throw new Exception($"重試 {maxAttempts} 次失敗：{url}");
+                ShouldHandle = new PredicateBuilder<string>().Handle<Exception>(),
+                MaxRetryAttempts = maxAttempts - 1,
+                Delay = TimeSpan.FromSeconds(2),
+                BackoffType = DelayBackoffType.Exponential,
+            })
+            .Build();
+
+        return await pipeline.ExecuteAsync(
+            async token => await http.GetStringAsync(url, token), ct);
     }
 }
