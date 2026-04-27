@@ -12,12 +12,13 @@ public class YahooQuoteProvider : IQuoteProvider, IDisposable
     private readonly HttpClient _http;
     private string? _crumb;
     private readonly SemaphoreSlim _crumbLock = new(1, 1);
+    private const string YahooQuery2 = "https://query2.finance.yahoo.com";
+    private const string YahooQuery1 = "https://query1.finance.yahoo.com";
 
     public YahooQuoteProvider()
     {
-        // UseCookies = true 讓 HttpClient 自動保留 fc.yahoo.com 設定的 cookie
-        var handler = new HttpClientHandler { UseCookies = true };
-        _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) };
+        // Render 等平台偶發 Yahoo 路由差異：優先固定 IPv4，並保留 cookie 以支援 crumb fallback。
+        _http = CommonHttp.CreateIpv4Client(useCookies: true);
         _http.DefaultRequestHeaders.Add("User-Agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
@@ -35,23 +36,36 @@ public class YahooQuoteProvider : IQuoteProvider, IDisposable
         {
             try
             {
-                var crumb = await EnsureCrumbAsync(ct);
                 var p1 = new DateTimeOffset(startDate.Date, TimeSpan.Zero).ToUnixTimeSeconds();
                 var p2 = new DateTimeOffset(endDate.Date.AddDays(1), TimeSpan.Zero).ToUnixTimeSeconds();
-                var url = $"https://query2.finance.yahoo.com/v8/finance/chart/{Uri.EscapeDataString(symbol.Code)}" +
-                          $"?period1={p1}&period2={p2}&interval=1d" +
-                          $"&crumb={Uri.EscapeDataString(crumb)}";
+                var basePath = $"/v8/finance/chart/{Uri.EscapeDataString(symbol.Code)}?period1={p1}&period2={p2}&interval=1d";
 
-                var resp = await _http.GetAsync(url, ct);
+                // 先嘗試不帶 crumb。某些環境（例如 Render）此路徑更穩定。
+                var resp = await _http.GetAsync($"{YahooQuery2}{basePath}", ct);
 
-                // crumb 過期時重置並重試
+                if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+                    resp = await _http.GetAsync($"{YahooQuery1}{basePath}", ct);
+
+                if (resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                {
+                    await Task.Delay(1500 * (attempt + 1), ct);
+                    continue;
+                }
+
+                // 被拒絕時才啟用 cookie + crumb fallback。
                 if (resp.StatusCode is System.Net.HttpStatusCode.Unauthorized
                                     or System.Net.HttpStatusCode.Forbidden)
                 {
-                    _crumb = null;
+                    var fallbackJson = await TryFetchWithCrumbFallbackAsync(basePath, ct);
+                    if (fallbackJson != null)
+                        return ParseChart(symbol, fallbackJson);
+
                     await Task.Delay(2000 * (attempt + 1), ct);
+                    _crumb = null;
                     continue;
                 }
+
+                resp.EnsureSuccessStatusCode();
 
                 var json = await resp.Content.ReadAsStringAsync(ct);
                 return ParseChart(symbol, json);
@@ -61,6 +75,21 @@ public class YahooQuoteProvider : IQuoteProvider, IDisposable
                 Console.WriteLine($"[WARN] Yahoo {symbol.Code} 第{attempt + 1}次失敗: {ex.Message}");
                 if (attempt < 2) await Task.Delay(2000 * (attempt + 1), ct);
             }
+        }
+
+        return null;
+    }
+
+    private async Task<string?> TryFetchWithCrumbFallbackAsync(string basePath, CancellationToken ct)
+    {
+        var crumb = await EnsureCrumbAsync(ct);
+        var withCrumb = $"{basePath}&crumb={Uri.EscapeDataString(crumb)}";
+
+        foreach (var host in new[] { YahooQuery2, YahooQuery1 })
+        {
+            var resp = await _http.GetAsync($"{host}{withCrumb}", ct);
+            if (resp.IsSuccessStatusCode)
+                return await resp.Content.ReadAsStringAsync(ct);
         }
 
         return null;
@@ -80,8 +109,9 @@ public class YahooQuoteProvider : IQuoteProvider, IDisposable
             await _http.GetAsync("https://fc.yahoo.com/", ct);
 
             // Step 2：取得 crumb 字串
-            _crumb = await _http.GetStringAsync(
-                "https://query2.finance.yahoo.com/v1/test/getcrumb", ct);
+            _crumb = await _http.GetStringAsync("https://query2.finance.yahoo.com/v1/test/getcrumb", ct);
+            if (string.IsNullOrWhiteSpace(_crumb))
+                _crumb = await _http.GetStringAsync("https://query1.finance.yahoo.com/v1/test/getcrumb", ct);
 
             return _crumb;
         }

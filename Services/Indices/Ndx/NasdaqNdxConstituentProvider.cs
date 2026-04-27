@@ -16,8 +16,7 @@ public class NasdaqNdxConstituentProvider : IConstituentProvider
 
     public NasdaqNdxConstituentProvider()
     {
-        var handler = new HttpClientHandler { UseCookies = true };
-        _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) };
+        _http = CommonHttp.CreateIpv4Client(useCookies: true);
         _http.DefaultRequestHeaders.Add("User-Agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");

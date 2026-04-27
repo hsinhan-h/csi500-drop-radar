@@ -10,10 +10,11 @@ public static class CommonHttp
     /// 建立強制走 IPv4 的 HttpClient，避免在 Render 等平台上因 IPv6 出站
     /// 連到只有 IPv4 後端的中國 API 時收到 502 Bad Gateway。
     /// </summary>
-    public static HttpClient CreateIpv4Client()
+    public static HttpClient CreateIpv4Client(bool useCookies = false)
     {
         var handler = new SocketsHttpHandler
         {
+            UseCookies = useCookies,
             ConnectCallback = async (ctx, ct) =>
             {
                 var addresses = await Dns.GetHostAddressesAsync(
