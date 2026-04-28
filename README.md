@@ -2,7 +2,7 @@
 
 分析多市場指數成分股在指定時間區間內的漲跌幅，支援**跌幅排行**與**漲幅排行**兩種模式，並可匯出 Excel 報表。
 
-**線上版本**：https://index-swing-radar-production.up.railway.app/
+**線上版本**：https://index-swing-radar.onrender.com/
 
 ---
 
