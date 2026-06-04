@@ -3,6 +3,7 @@ using IndexSwingRadar.Services.Indices;
 using IndexSwingRadar.Services.Indices.Csi500;
 using IndexSwingRadar.Services.Indices.Ndx;
 using IndexSwingRadar.Services.Indices.Sox;
+using IndexSwingRadar.Services.Indices.Szse100;
 using IndexSwingRadar.Services.Indices.UsCommon;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -19,6 +20,7 @@ builder.Services.AddSingleton<UsMarketClock>();
 
 // ── 各 Provider（均為 singleton，自行管理 HttpClient 生命週期）──────────
 builder.Services.AddSingleton<EastmoneyCsi500ConstituentProvider>();
+builder.Services.AddSingleton<EastmoneySzse100ConstituentProvider>();
 builder.Services.AddSingleton<TencentChinaQuoteProvider>();
 builder.Services.AddSingleton<IsharesSoxxConstituentProvider>();
 builder.Services.AddSingleton<NasdaqNdxConstituentProvider>();
@@ -26,6 +28,7 @@ builder.Services.AddSingleton<YahooQuoteProvider>();
 
 // ── 指數模組（新增第四個指數：加一個 AddSingleton<IMarketIndexModule, ...>）
 builder.Services.AddSingleton<IMarketIndexModule, Csi500Module>();
+builder.Services.AddSingleton<IMarketIndexModule, Szse100Module>();
 builder.Services.AddSingleton<IMarketIndexModule, SoxModule>();
 builder.Services.AddSingleton<IMarketIndexModule, NdxModule>();
 
