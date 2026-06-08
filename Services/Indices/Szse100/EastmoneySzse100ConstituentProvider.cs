@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace IndexSwingRadar.Services.Indices.Szse100;
 
-/// <summary>從東方財富 push2 API 取得深證100 成分股清單（BK0500，翻頁抓取）。</summary>
+/// <summary>從東方財富 push2 API 取得深證100 成分股清單（BK0743，翻頁抓取）。</summary>
 public class EastmoneySzse100ConstituentProvider : IConstituentProvider
 {
     private readonly HttpClient _http;
@@ -24,7 +24,7 @@ public class EastmoneySzse100ConstituentProvider : IConstituentProvider
         {
             var url = "https://push2.eastmoney.com/api/qt/clist/get" +
                       $"?pn={page}&pz={pageSize}&po=1&np=1&fltt=2&invt=2&fid=f3" +
-                      "&fs=b:BK0500&fields=f12,f14&ut=bd1d9ddb04089700cf9c27f6f7426281";
+                      "&fs=b:BK0743&fields=f12,f14&ut=bd1d9ddb04089700cf9c27f6f7426281";
 
             var json = await CommonHttp.RetryGetAsync(_http, url, ct: ct);
             using var doc = JsonDocument.Parse(json);
