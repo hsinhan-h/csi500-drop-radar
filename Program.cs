@@ -22,7 +22,7 @@ builder.Services.AddSingleton<UsMarketClock>();
 builder.Services.AddSingleton<EastmoneyCsi500ConstituentProvider>();
 builder.Services.AddSingleton<EastmoneySzse100ConstituentProvider>();
 builder.Services.AddSingleton<TencentChinaQuoteProvider>();
-builder.Services.AddSingleton<IsharesSoxxConstituentProvider>();
+builder.Services.AddSingleton<MoneyDjSoxxConstituentProvider>();
 builder.Services.AddSingleton<NasdaqNdxConstituentProvider>();
 builder.Services.AddSingleton<YahooQuoteProvider>();
 

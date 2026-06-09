@@ -10,7 +10,7 @@ public class SoxModule : IMarketIndexModule
     public IMarketClock         Clock        { get; }
 
     public SoxModule(
-        IsharesSoxxConstituentProvider constituents,
+        MoneyDjSoxxConstituentProvider constituents,
         YahooQuoteProvider quotes,
         UsMarketClock clock)
     {

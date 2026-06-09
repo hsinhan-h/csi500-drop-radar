@@ -3,7 +3,11 @@
     "allow": [
       "Bash(mv \"csi500-drop-radar-cs.csproj\" \"csi500-drop-radar.csproj\")",
       "Bash(mv \"csi500-drop-radar-cs.sln\" \"csi500-drop-radar.sln\")",
-      "Bash(mv \"csi500-drop-radar-cs.csproj.user\" \"csi500-drop-radar.csproj.user\")"
+      "Bash(mv \"csi500-drop-radar-cs.csproj.user\" \"csi500-drop-radar.csproj.user\")",
+      "Bash(dotnet build *)"
+    ],
+    "deny": [
+      "Bash(git commit*)"
     ]
   }
 }
