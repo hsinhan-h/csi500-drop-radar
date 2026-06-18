@@ -10,6 +10,10 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Swing Radar">
 <meta name="theme-color" content="#f59e0b">
+<meta name="description" content="分析指數成分股漲跌幅排行，支援中證500、那斯達克等主要指數。">
+<meta property="og:title" content="Swing Radar — 指數漲跌幅分析工具">
+<meta property="og:description" content="分析指數成分股漲跌幅排行，支援中證500、那斯達克等主要指數。">
+<meta property="og:type" content="website">
 <link rel="apple-touch-icon" href="/icon.svg">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;600&family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
 <style>
@@ -115,7 +119,8 @@
     cursor:pointer;transition:opacity .2s,transform .2s,box-shadow .2s;
     letter-spacing:.04em;
   }
-  .run-btn:hover{opacity:.88;transform:translateY(-1px);box-shadow:0 4px 20px var(--accent-glow)}
+  .run-btn{box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}
+  .run-btn:hover{opacity:.88;transform:translateY(-1px);box-shadow:0 4px 24px var(--accent-glow),inset 0 1px 0 rgba(255,255,255,.18)}
   .run-btn:active{transform:translateY(0) scale(.98);opacity:1}
   .run-btn:disabled{opacity:.35;cursor:not-allowed;transform:none;box-shadow:none}
   .run-btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
@@ -131,11 +136,13 @@
   @keyframes spin{to{transform:rotate(360deg)}}
   .prog-wrap{background:var(--surface2);border-radius:2px;height:2px;margin-bottom:10px;overflow:hidden}
   .prog-bar{
-    height:100%;background:var(--accent);
+    height:100%;
+    background:linear-gradient(90deg,var(--accent) 0%,#fcd34d 50%,var(--accent) 100%);
+    background-size:200% 100%;
     width:0;transition:width .5s;border-radius:2px;
-    animation:pulse 2s ease-in-out infinite;
+    animation:shimmer 1.8s ease-in-out infinite;
   }
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+  @keyframes shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}
   #prog-msg{font-size:11.5px;color:var(--text2);font-family:'IBM Plex Mono',monospace;letter-spacing:.03em}
 
   /* ── Result meta ─────────────────────────────────── */
@@ -220,6 +227,33 @@
     td{padding:10px}
     footer{padding:20px 16px 14px;font-size:10px}
   }
+
+  /* ── Grain texture ───────────────────────────────── */
+  body::before{
+    content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    opacity:.04;mix-blend-mode:screen;
+  }
+  /* ── Custom scrollbar ────────────────────────────── */
+  ::-webkit-scrollbar{width:5px;height:5px}
+  ::-webkit-scrollbar-track{background:var(--bg)}
+  ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+  ::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+  /* ── Card depth ──────────────────────────────────── */
+  .card{box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 2px 12px rgba(0,0,0,.45)}
+  /* ── Logo glow ───────────────────────────────────── */
+  .logo-svg{filter:drop-shadow(0 0 10px rgba(245,158,11,.25))}
+  /* ── Page fade-in ────────────────────────────────── */
+  @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  main{animation:fadeUp .4s ease both}
+  /* ── Rank medals ─────────────────────────────────── */
+  .rank.r1{color:#fcd34d;font-weight:800;text-shadow:0 0 10px rgba(252,211,77,.35)}
+  .rank.r2{color:#94a3b8;font-weight:700}
+  .rank.r3{color:#b87333;font-weight:700}
+  /* ── Table row tint ──────────────────────────────── */
+  tr:nth-child(even) td{background:rgba(255,255,255,.013)}
+  /* ── Table wrap depth ────────────────────────────── */
+  .table-wrap{box-shadow:0 4px 20px rgba(0,0,0,.3)}
 </style>
 </head>
 <body>
@@ -519,7 +553,7 @@ function render(r) {
     const rk  = i + 1;
     const pos = row.pct_change >= 0;
     return `<tr>
-      <td><span class="rank ${rk<=3?'t3':''}">#${rk}</span></td>
+      <td><span class="rank ${rk===1?'t3 r1':rk===2?'t3 r2':rk===3?'t3 r3':''}">#${rk}</span></td>
       <td><span class="code">${row.code}</span></td>
       <td>${row.name}</td>
       <td style="font-family:'IBM Plex Mono',monospace">${ccySym}${row.start_close.toFixed(2)}</td>
